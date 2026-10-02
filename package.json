@@ -1,7 +1,7 @@
 {
   "name": "blitz-relay-proxy",
-  "version": "2.0.0",
-  "description": "Universal HTTP relay + forward proxy untuk blitz.cloud — semua method/header, streaming, long request, SSE, WebSocket. Tanpa framework, tanpa auth.",
+  "version": "3.0.0",
+  "description": "Proxy server itu sendiri untuk blitz.cloud — forward proxy HTTP/CONNECT + relay universal + WebSocket. Tanpa upstream, tanpa framework.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,11 +11,8 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
-    "http-proxy-agent": "^7.0.2",
-    "https-proxy-agent": "^7.0.5",
-    "socks-proxy-agent": "^8.0.4"
+    "dotenv": "^16.4.5"
   },
-  "keywords": ["proxy", "relay", "forward-proxy", "reverse-proxy", "blitz.cloud", "rotating-proxy", "sse"],
+  "keywords": ["proxy", "forward-proxy", "relay", "blitz.cloud", "websocket", "sse"],
   "license": "MIT"
 }

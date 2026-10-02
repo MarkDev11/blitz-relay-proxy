@@ -1,118 +1,81 @@
-# 🔀 Universal Relay Proxy
+# 🔀 Proxy Server (blitz.cloud)
 
-Forward proxy + universal HTTP relay siap deploy di **blitz.cloud** (plain Node.js, tanpa framework). Tanpa auth, CORS terbuka.
+**Server ini ADALAH proxy-nya.** Bukan tempat nyimpen proxy, bukan rotasi proxy orang lain.
+Deploy → dapat URL → pakai URL itu sebagai proxy di app/browser/curl/Python.
+IP yang dilihat target = IP egress blitz.cloud.
 
-Prinsip: **universal** — method apa pun, header apa pun, body apa pun, durasi apa pun.
+## Deploy (Dockerfile)
 
-- ✅ Semua HTTP method (`GET POST PUT PATCH DELETE HEAD OPTIONS` + custom)
-- ✅ Semua header diteruskan 1:1 (kecuali hop-by-hop), termasuk `Authorization`, custom `X-*`
-- ✅ Body **streaming** — tanpa buffering, tanpa limit MB → file besar, upload, SSE aman
-- ✅ Long request — upstream timeout default **0 (tanpa batas)**; `server.requestTimeout = 0`
-- ✅ SSE / LLM stream / download besar — `proxyRes.pipe(clientRes)` + `x-accel-buffering: no`
-- ✅ WebSocket upgrade (`ws://`/`wss://` via `/proxy/` & `CONNECT`)
-- ✅ Forward proxy: `CONNECT` (HTTPS) + absolute-URI (HTTP) di port yang sama
-- ✅ Pool upstream rotasi `roundrobin`/`random` + cooldown + sticky `X-Proxy`
-- ✅ CORS preflight `OPTIONS` dijawab global
+Step 2 blitz: biarkan **Dockerfile**, **Start command kosong** (= pakai `CMD` → `node server.js`) atau isi `node server.js`. Jangan isi `npm start` untuk mode Docker.
 
-## Format proxy (pool upstream)
+Env yang dibaca (Step 3) — cuma 2, opsional:
 
-| Format | Contoh |
-|---|---|
-| `protocol://user:pass@host:port` | `http://u:p@1.2.3.4:8080`, `socks5://u:p@1.2.3.4:1080` |
-| `protocol://host:port` | `http://1.2.3.4:8080` |
-| `user:pass@host:port` | `u:p@1.2.3.4:8080` → http |
-| `host:port:user:pass` | `1.2.3.4:8080:u:p` |
-| `host:port` | `1.2.3.4:8080` |
+| Var | Default | Fungsi |
+|---|---|---|
+| `PROXY_USER` | _(kosong)_ | Kalau diisi + `PROXY_PASS`, proxy terkunci |
+| `PROXY_PASS` | _(kosong)_ | Pasangan `PROXY_USER` |
 
-Protocol: `http`, `https`, `socks4`, `socks5`, `socks5h`.
+Env lama (`PROXIES`, `PROXY_FILE`, `ROTATE`, `UPSTREAM_TIMEOUT_MS`, dll) **sudah tidak dipakai** — hapus saja kalau masih muncul di dashboard blitz.
 
-## Deploy blitz.cloud
-
-1. Push folder `relay/` sebagai repo / subfolder.
-2. New App → dari GitHub → start command `npm start` (jangan set `PORT` manual).
-3. Env di dashboard:
-   - `PROXIES=http://u:p@1.2.3.4:8080,1.2.3.4:8080:u:p`
-   - `ROTATE=roundrobin`
-   - `UPSTREAM_TIMEOUT_MS=0`
-4. Deploy. Buka URL app → dashboard.
-
-Alternatif: isi `proxies.txt` lalu push, atau build `Dockerfile` sebagai container.
-
-## Cara pakai
-
-### A. Forward proxy (semua app)
+## Cara pakai (server ini proxy-nya)
 
 ```
-http://<app>.blitz.cloud
+http://blitz-relay-proxy.dannd.blitz.cloud
 ```
 
 ```bash
-curl -x http://<app>.blitz.cloud https://api.ipify.org
-curl -x http://<app>.blitz.cloud http://httpbin.org/ip
+# HTTP
+curl -x http://blitz-relay-proxy.dannd.blitz.cloud http://httpbin.org/ip
+
+# HTTPS (CONNECT tunnel)
+curl -x http://blitz-relay-proxy.dannd.blitz.cloud https://api.ipify.org
 ```
 
-- Puppeteer: `args: ["--proxy-server=http://<app>.blitz.cloud"]`
-- Python: `proxies={"http": APP, "https": APP}`
-- Kunci ke 1 upstream: header `X-Proxy: host:port:user:pass` atau `X-Proxy: socks5://u:p@h:p`.
+- Puppeteer: `args: ["--proxy-server=http://blitz-relay-proxy.dannd.blitz.cloud"]`
+- Python: `proxies = {"http": APP, "https": APP}`
+- Browser / OS: isi HTTP proxy = host ini.
 
-### B. Universal relay (tanpa setting proxy di client)
+Dengan auth (`PROXY_USER` + `PROXY_PASS` diisi):
 
 ```bash
-# GET — query SELAIN url/proxy diteruskan ke target
-curl "https://<app>.blitz.cloud/api/fetch?url=https://api.ipify.org"
-curl "https://<app>.blitz.cloud/r?url=https://api.ipify.org"
-curl "https://<app>.blitz.cloud/proxy/https://api.ipify.org"
+curl -x http://USER:PASS@blitz-relay-proxy.dannd.blitz.cloud https://api.ipify.org
+```
 
-# POST mentah — method/header/body diteruskan 1:1 (streaming)
-curl -X POST "https://<app>.blitz.cloud/api/fetch?url=https://httpbin.org/post" \
+## Tanpa setting proxy (relay universal)
+
+Method + header + body diteruskan mentah, body **streaming** (tanpa buffering), long request / SSE / file besar OK.
+
+```bash
+curl "https://APP/api/fetch?url=https://api.ipify.org"
+curl "https://APP/r?url=https://api.ipify.org"
+curl "https://APP/proxy/https://api.ipify.org"
+
+curl -X POST "https://APP/api/fetch?url=https://httpbin.org/post" \
   -H "Content-Type: application/json" -d '{"hello":"world"}'
 
-# OpenAI-style + streaming SSE (header Authorization diteruskan apa adanya)
-curl -N -X POST "https://<app>.blitz.cloud/api/fetch?url=https://api.openai.com/v1/chat/completions" \
+# OpenAI-style + SSE stream
+curl -N -X POST "https://APP/api/fetch?url=https://api.openai.com/v1/chat/completions" \
   -H "Authorization: Bearer sk-..." -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}'
 
-# JSON-spec (tanpa query): url+method+headers+body
-curl -X POST https://<app>.blitz.cloud/api/fetch \
-  -H "Content-Type: application/json" \
+# JSON-spec
+curl -X POST https://APP/api/fetch -H "Content-Type: application/json" \
   -d '{"url":"https://httpbin.org/anything","method":"PUT","headers":{"x-custom":"1"},"body":{"a":1}}'
-
-# Kunci upstream tertentu
-curl "https://<app>.blitz.cloud/api/fetch?url=https://api.ipify.org&proxy=1.2.3.4:8080:u:p"
-curl -H "X-Proxy: socks5://u:p@h:p" "https://<app>.blitz.cloud/api/fetch?url=https://api.ipify.org"
 ```
 
-### Manajemen
+## Manajemen
 
 | Endpoint | Fungsi |
 |---|---|
 | `GET /` | Dashboard |
-| `GET /health` | Hidup + pool |
-| `GET /api/stats` | Statistik relay per upstream |
-| `GET /api/proxies` | Daftar upstream (password di-mask) + baris format salah |
-| `POST /api/reload` | Reload pool tanpa restart |
-| `POST /api/check` | Tes upstream: `{"url":"http://httpbin.org/ip","proxy":"..."}` |
+| `GET /health` | `{"ok":true,"proxy":true,...}` |
+| `GET /api/stats` | Statistik forward/CONNECT/relay |
 
 ## Lokal
 
 ```bash
-cd relay
 npm install
 npm start
 # http://localhost:3000
+# tes: curl -x http://localhost:3000 https://api.ipify.org
 ```
-
-## Env
-
-| Var | Default | Fungsi |
-|---|---|---|
-| `PORT` | `3000` | Di-inject blitz otomatis |
-| `HOST` | `0.0.0.0` | Bind |
-| `PROXIES` | — | Pool inline (koma/newline/semicolon) |
-| `PROXY_FILE` | `proxies.txt` | File pool |
-| `ROTATE` | `roundrobin` | `roundrobin` \| `random` |
-| `UPSTREAM_TIMEOUT_MS` | `0` | 0 = tanpa batas (long request OK) |
-| `CONNECT_TIMEOUT_MS` | `20000` | Timeout handshake CONNECT upstream |
-| `CHECK_URL` | `http://httpbin.org/ip` | Default `/api/check` |
-| `PROXY_COOLDOWN_MS` | `60000` | Cooldown upstream gagal |
-| `PROXY_MAX_FAILS` | `3` | Batas gagal sebelum cooldown |
