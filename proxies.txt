@@ -1,0 +1,6 @@
+# Isi dengan proxy kamu, satu per baris. DUA format didukung:
+#   protocol://user:pass@host:port   -> http://u:p@1.2.3.4:8080 | socks5://u:p@1.2.3.4:1080 | http://1.2.3.4:8080
+#   host:port:user:pass               -> 1.2.3.4:8080:u:p
+# Baris # = komentar. Contoh:
+# http://user1:pass1@103.162.17.207:8080
+# 165.16.88.218:8080:user:pass
