@@ -1,49 +1,45 @@
-# 🔀 Proxy Server (blitz.cloud)
+# 🔀 Proxy Server (blitz.cloud) — 9router-compatible relay
 
-**Server ini ADALAH proxy-nya.** Bukan tempat nyimpen proxy, bukan rotasi proxy orang lain.
-Deploy → dapat URL → pakai URL itu sebagai proxy di app/browser/curl/Python.
+**Server ini ADALAH proxy-nya.** Deploy → dapat URL → daftarkan sebagai **proxy pool di 9router**
+(type `vercel`), atau pakai langsung sebagai relay universal.
 IP yang dilihat target = IP egress blitz.cloud.
 
-## Deploy (Dockerfile)
+## Cara pakai utama: 9router proxy pool ✅
 
-Step 2 blitz: biarkan **Dockerfile**, **Start command kosong** (= pakai `CMD` → `node server.js`) atau isi `node server.js`. Jangan isi `npm start` untuk mode Docker.
+Di dashboard 9router → **Proxy Pools → Add**:
 
-Env yang dibaca (Step 3) — cuma 2, opsional:
+| Field | Isi |
+|---|---|
+| `name` | `blitz-relay` (bebas) |
+| `proxyUrl` | `https://proxy.dannd.blitz.cloud` |
+| `type` | `vercel` |
+| `noProxy` | _(kosongkan)_ |
 
-| Var | Default | Fungsi |
-|---|---|---|
-| `PROXY_USER` | _(kosong)_ | Kalau diisi + `PROXY_PASS`, proxy terkunci |
-| `PROXY_PASS` | _(kosong)_ | Pasangan `PROXY_USER` |
+Lalu pakai pool itu di connection (per-connection `proxyPoolId`).
+Cara kerja: 9router `fetch(poolUrl, { headers: { "x-relay-target": "https://target-host",
+"x-relay-path": "/path?q=1", ...header asli } })` — server teruskan method + header
+(minus `x-relay-*`) + body 1:1 secara streaming, response target dibalikkan mentah
+(status + headers + body). Protokolnya identik dengan worker relay resmi 9router
+(cloudflare/vercel/deno deploy), jadi `Test` di dashboard 9router juga jalan
+(`x-relay-target:https://httpbin.org` + `x-relay-path:/get`).
 
-Env lama (`PROXIES`, `PROXY_FILE`, `ROTATE`, `UPSTREAM_TIMEOUT_MS`, dll) **sudah tidak dipakai** — hapus saja kalau masih muncul di dashboard blitz.
-
-## Cara pakai (server ini proxy-nya)
-
-```
-http://blitz-relay-proxy.dannd.blitz.cloud
-```
-
-```bash
-# HTTP
-curl -x http://blitz-relay-proxy.dannd.blitz.cloud http://httpbin.org/ip
-
-# HTTPS (CONNECT tunnel)
-curl -x http://blitz-relay-proxy.dannd.blitz.cloud https://api.ipify.org
-```
-
-- Puppeteer: `args: ["--proxy-server=http://blitz-relay-proxy.dannd.blitz.cloud"]`
-- Python: `proxies = {"http": APP, "https": APP}`
-- Browser / OS: isi HTTP proxy = host ini.
-
-Dengan auth (`PROXY_USER` + `PROXY_PASS` diisi):
+Tes manual (hasilnya harus JSON httpbin, bukan dashboard):
 
 ```bash
-curl -x http://USER:PASS@blitz-relay-proxy.dannd.blitz.cloud https://api.ipify.org
+curl -s https://APP/ -H "x-relay-target: http://httpbin.org" -H "x-relay-path: /ip"
+curl -s -X POST https://APP/ -H "x-relay-target: https://httpbin.org" \
+  -H "x-relay-path: /post" -H "Content-Type: application/json" -d '{"a":1}'
 ```
 
-## Tanpa setting proxy (relay universal)
+> Catatan: mode forward-proxy klasik (`curl -x`, set proxy di browser/OS/Puppeteer,
+> `CONNECT`) tetap ada di kode tapi **tidak lolos Cloudflare di depan blitz.cloud**
+> (request absolut/`CONNECT` dibuang edge, tidak sampai ke container). Di VPS tanpa
+> CDN di depan, mode itu langsung jalan tanpa ubah kode.
 
-Method + header + body diteruskan mentah, body **streaming** (tanpa buffering), long request / SSE / file besar OK.
+## Relay universal (tanpa 9router)
+
+Method + header + body diteruskan mentah, body **streaming** (tanpa buffering),
+long request / SSE / file besar OK.
 
 ```bash
 curl "https://APP/api/fetch?url=https://api.ipify.org"
@@ -63,6 +59,18 @@ curl -X POST https://APP/api/fetch -H "Content-Type: application/json" \
   -d '{"url":"https://httpbin.org/anything","method":"PUT","headers":{"x-custom":"1"},"body":{"a":1}}'
 ```
 
+## Deploy (Dockerfile)
+
+Step 2 blitz: biarkan **Dockerfile**, **Start command kosong** (= pakai `CMD` → `node server.js`)
+atau isi `node server.js`. Jangan isi `npm start` untuk mode Docker.
+
+Env yang dibaca (Step 3) — cuma 2, opsional:
+
+| Var | Default | Fungsi |
+|---|---|---|
+| `PROXY_USER` | _(kosong)_ | Kalau diisi + `PROXY_PASS`, relay terkunci (401/407) |
+| `PROXY_PASS` | _(kosong)_ | Pasangan `PROXY_USER` |
+
 ## Manajemen
 
 | Endpoint | Fungsi |
@@ -77,5 +85,6 @@ curl -X POST https://APP/api/fetch -H "Content-Type: application/json" \
 npm install
 npm start
 # http://localhost:3000
-# tes: curl -x http://localhost:3000 https://api.ipify.org
+# tes protokol 9router:
+# curl -s http://localhost:3000/ -H "x-relay-target: http://httpbin.org" -H "x-relay-path: /ip"
 ```

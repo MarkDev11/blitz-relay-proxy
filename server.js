@@ -95,6 +95,7 @@ const DROP_REQ = new Set([
   "host", "connection", "proxy-connection", "proxy-authorization",
   "proxy-authenticate", "keep-alive", "transfer-encoding", "upgrade",
   "x-proxy-auth", "x-target-url", "x-target-method",
+  "x-relay-target", "x-relay-path", // 9router relay protocol (jangan diteruskan ke target)
 ]);
 const DROP_RES = new Set([
   "connection", "proxy-connection", "proxy-authenticate",
@@ -150,7 +151,8 @@ function relayDirect(clientReq, clientRes, targetUrlStr, opts = {}) {
       outH[k] = v;
     }
     Object.assign(outH, corsHeaders());
-    outH["x-relay-target"] = target.host;
+    // NOTE: jangan set x-relay-target di response — 9router tidak mengharapkannya
+    // dan worker resmi juga tidak mengirimnya balik. Hindari bentrok header.
     outH["x-accel-buffering"] = "no";
     if (!outH["cache-control"]) outH["cache-control"] = "no-cache";
 
@@ -251,6 +253,9 @@ Puppeteer: <code>args: ["--proxy-server=http://${host}"]</code><br>
 Python: <code>proxies = {"http": "http://${host}", "https": "http://${host}"}</code><br>
 Browser / OS: isi HTTP proxy = host ini, port 80/443.</p>
 ${AUTH_REQUIRED ? `<p>Dengan auth:<br><code>curl -x http://${PROXY_USER}:${PROXY_PASS}@${host} https://api.ipify.org</code></p>` : ``}</div>
+<div class="card"><h3>Kompatibel 9router proxy pool (type: vercel)</h3>
+<pre>proxyUrl = https://${host}   (type: vercel)</pre>
+<p>9router mengirim <code>x-relay-target: https://target-host</code> + <code>x-relay-path: /path</code> ke path apa pun (termasuk <code>/</code>) — diteruskan 1:1, response dibalikkan mentah. Tambahkan di dashboard 9router → Proxy Pools → Add.</p></div>
 <div class="card"><h3>Tanpa setting proxy (relay universal — method/header/body diteruskan mentah, streaming)</h3>
 <pre>GET  /api/fetch?url=https://api.ipify.org
 GET  /r?url=https://api.ipify.org
@@ -292,10 +297,35 @@ async function handleRequest(req, res) {
     urlObj = new URL("/", "http://local");
   }
 
-  // CORS preflight global
-  if (req.method === "OPTIONS" && (pathOnly.startsWith("/api/") || pathOnly.startsWith("/proxy") || pathOnly === "/r")) {
+  // CORS preflight global — jawab untuk SEMUA path agar relay 9router
+  // (yang bisa ke path apa pun, termasuk "/") lolos dari browser.
+  if (req.method === "OPTIONS") {
     res.writeHead(204, { ...corsHeaders(), "access-control-max-age": "86400", "content-length": "0" });
     res.end();
+    return;
+  }
+
+  // 2) PROTOKOL RELAY 9ROUTER (prioritas — dipakai proxyAwareFetch):
+  //   fetch(poolUrl, { headers: {
+  //     "x-relay-target": "https://target-host",   // WAJIB: scheme + host (+port)
+  //     "x-relay-path": "/path?q=1",               // opsional, default "/"
+  //     ...semua header asli client
+  //   }})
+  //   -> method + headers (minus x-relay-*) + body diteruskan 1:1 (streaming),
+  //      response target dibalikkan mentah (status + headers + body).
+  //   Berlaku untuk SEMUA path (root "/" juga), agar kompatibel dengan
+  //   worker relay resmi 9router (cloudflare/vercel/deno deploy).
+  //   HARUS sebelum handler dashboard "/" — 9router menembak root "/" + header ini.
+  const relayTarget = req.headers["x-relay-target"];
+  if (relayTarget) {
+    if (!checkProxyAuth(req)) {
+      denyProxy(res, false);
+      return;
+    }
+    const relayPath = req.headers["x-relay-path"] || "/";
+    const base = String(relayTarget).replace(/\/$/, "");
+    const target = base + (String(relayPath).startsWith("/") ? String(relayPath) : "/" + String(relayPath));
+    relayDirect(req, res, target, { method: req.method });
     return;
   }
 
@@ -305,6 +335,7 @@ async function handleRequest(req, res) {
     res.end(body);
     return;
   }
+
   if (req.method === "GET" && pathOnly === "/health") {
     sendJson(res, 200, {
       ok: true,
@@ -334,7 +365,7 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // 2) RELAY UNIVERSAL (untuk client yang tidak bisa set proxy)
+  // 3) RELAY UNIVERSAL (untuk client yang tidak bisa set proxy)
   if (pathOnly === "/api/fetch" || pathOnly === "/r" || pathOnly === "/api/relay") {
     const ct = (req.headers["content-type"] || "").toLowerCase();
     const qUrl = urlObj.searchParams.get("url") || req.headers["x-target-url"];
