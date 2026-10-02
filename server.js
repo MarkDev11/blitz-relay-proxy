@@ -194,7 +194,10 @@ function relayDirect(clientReq, clientRes, targetUrlStr, opts = {}) {
   } else {
     clientReq.on("data", (c) => { stats.bytesUp += c.length; });
     clientReq.on("error", () => { try { proxyReq.destroy(); } catch {} });
-    clientReq.pipe(proxyReq);
+    clientReq.on("end", () => {
+      try { proxyReq.end(); } catch {}
+    });
+    clientReq.pipe(proxyReq, { end: false });
   }
 }
 
@@ -316,6 +319,16 @@ async function handleRequest(req, res) {
   //   Berlaku untuk SEMUA path (root "/" juga), agar kompatibel dengan
   //   worker relay resmi 9router (cloudflare/vercel/deno deploy).
   //   HARUS sebelum handler dashboard "/" — 9router menembak root "/" + header ini.
+  // Type pool blitz HARUS "vercel" (atau cloudflare/deno) agar 9router pakai
+  // jalur relay x-relay-target. Kalau "http", 9router malah memperlakukannya
+  // sebagai HTTP proxy klasik (ProxyAgent) dan test-nya pasti fail.
+  // Tambahkan di dashboard 9router → Proxy Pools → Add/Edit:
+  //   name=blitz-relay, proxyUrl=https://proxy.dannd.blitz.cloud, type=vercel
+  //
+  // NOTE: test bawaan 9router untuk pool relay = HEAD + header x-relay-*.
+  // Worker resmi 9router teruskan HEAD apa adanya; beberapa origin (httpbin,
+  // google) memang menunda body HEAD, jadi test bisa lambat di sisi origin —
+  // itu perilaku upstream, bukan bug relay.
   const relayTarget = req.headers["x-relay-target"];
   if (relayTarget) {
     if (!checkProxyAuth(req)) {
